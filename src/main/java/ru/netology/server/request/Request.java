@@ -11,22 +11,30 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class Request {
-    private final static int readAheadLimit = 4096;
+    private final static int READ_AHEAD_LIMIT = 4096;
     private final static String GET = "GET";
     private final static String POST = "POST";
+    private final static String HEADER_CONTENT_LENGTH = "Content-Length";
 
     private final String method;
     private final String urlPath;
     private final String path;
-    private final Map<String, String> querryString;
+    // may be null
+    private final Map<String, String> querryStringParams;
+    private final Map<String, String> querryStringBodyParams;
     private final Map<String, String> headers;
-    private final String body;
+    private final byte[] body;
 
-    private Request(String method, String urlPath, String path, Map<String, String> querryString, Map<String, String> headers, String body) {
+    public Request(String method, String urlPath, String path,
+                   Map<String, String> querryStringParams,
+                   Map<String, String> querryStringBodyParams,
+                   Map<String, String> headers,
+                   byte[] body) {
         this.method = method;
         this.urlPath = urlPath;
         this.path = path;
-        this.querryString = querryString;
+        this.querryStringParams = querryStringParams;
+        this.querryStringBodyParams = querryStringBodyParams;
         this.headers = headers;
         this.body = body;
     }
@@ -43,21 +51,26 @@ public class Request {
         return headers;
     }
 
-    public String getBody() {
+    public byte[] getBody() {
         return body;
     }
 
     public Map<String, String> getQuerryStringParams() {
-        return querryString;
+        return querryStringParams;
+    }
+
+    public Map<String, String> getQuerryStringBodyParams() {
+        return querryStringBodyParams;
     }
 
     public String getUrlPath() {
         return urlPath;
     }
 
+
     public static Request fromInputStream(InputStream in) throws IOException, URISyntaxException {
-        in.mark(readAheadLimit);
-        byte[] buffer = new byte[readAheadLimit];
+        in.mark(READ_AHEAD_LIMIT);
+        byte[] buffer = new byte[READ_AHEAD_LIMIT];
         int read = in.read(buffer);
 
         //requestLine
@@ -87,14 +100,15 @@ public class Request {
         }
 
         // querryParams
-        Map<String, String> querryString = getQueryParams(urlPath);
+        Map<String, String> queryStringParams = getQueryParamsFromUrl(urlPath);
 
         // path without querryParams
-        String path = urlPath.substring(0,urlPath.indexOf("&"));
+        String path = queryStringParams.isEmpty() ? urlPath : urlPath.substring(0, urlPath.indexOf("?"));
 
         //headers
         byte[] headersDelimiter = new byte[]{'\r', '\n', '\r', '\n'};
         int headersStart = requestLineEnd + requestLineDelimiter.length;
+
         int headersEnd = indexOf(buffer, headersDelimiter, headersStart, read);
 
         if (headersEnd == -1) {
@@ -117,20 +131,34 @@ public class Request {
             headers.put(headerName, headerValue);
         });
 
-        //messageBody
-        String body = "";
+
+        //Body
+        byte[] body = null;
+        Map<String, String> querryStringBodyParams = null;
+
+
         if (!method.equals(GET)) {
             in.skip(headersDelimiter.length);
 
-            Optional<String> contentLength = extractHeader(headers, "Content-Length");
+            int bodyLength = in.available();
 
-            if (contentLength.isPresent()) {
-                int length = Integer.parseInt(contentLength.get());
-                byte[] bodyBytes = in.readNBytes(length);
-                body = new String(bodyBytes);
-            }
+            if (bodyLength!=0) body = in.readNBytes(bodyLength);
+
+            querryStringBodyParams = getQueryParamsFromBody(body);
+
+            System.out.println(querryStringBodyParams);
+
+
+//            String contentLength = headers.get(HEADER_CONTENT_LENGTH);
+//
+//            if (!(contentLength == null)) {
+//                int length = Integer.parseInt(contentLength);
+//                body = in.readNBytes(length);
+//                querryStringBodyParams = getQueryParamsFromBody(body);
+//            }
         }
-        return new Request(method, urlPath, path, querryString, headers, body);
+
+        return new Request(method, urlPath, path, queryStringParams, querryStringBodyParams, headers, body);
     }
 
     private static int indexOf(byte[] array, byte[] target, int start, int max) {
@@ -146,24 +174,43 @@ public class Request {
         return -1;
     }
 
-    private static Optional<String> extractHeader(Map<String,String> headers, String header) {
-        return headers.keySet().stream()
-                .filter(o -> o.startsWith(header))
-                .map(o -> o.substring(o.indexOf(" ")))
-                .map(String::trim)
-                .findFirst();
-    }
+//    private static Optional<String> extractHeader(Map<String, String> headers, String header) {
+//        return headers.keySet().stream()
+//                .filter(o -> o.startsWith(header))
+//                .map(o -> o.substring(o.indexOf(" ")))
+//                .map(String::trim)
+//                .findFirst();
+//    }
 
-    public static Map<String,String> getQueryParams(String url) throws URISyntaxException {
+    public static Map<String, String> getQueryParamsFromUrl(String url) throws URISyntaxException {
         List<NameValuePair> params = URLEncodedUtils.parse(new URI(url), String.valueOf(StandardCharsets.UTF_8));
 
-        Map<String,String> querryParams = new HashMap<>();
+        Map<String, String> querryParams = new HashMap<>();
 
-        for (NameValuePair param : params) {
-            querryParams.put(param.getName(),param.getValue());
+        if (!params.isEmpty()) {
+            params.forEach(param -> querryParams.put(param.getName(), param.getValue()));
         }
 
         return querryParams;
     }
 
+    public String getQuerryParam(String querryParamName) {
+        return querryStringParams.get(querryParamName);
+    }
+
+    public static Map<String, String> getQueryParamsFromBody(byte[] body) {
+        List<String> listOfHeaders = Arrays.asList(new String(body).split("\r\n"));
+
+        Map<String, String> headers = new HashMap<>();
+
+        listOfHeaders.forEach(headerLine -> {
+            var i = headerLine.indexOf("=");
+            var headerName = headerLine.substring(0, i);
+            var headerValue = headerLine.substring(i + 1);
+            headers.put(headerName, headerValue);
+        });
+        return headers;
+    }
 }
+
+

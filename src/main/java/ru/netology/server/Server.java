@@ -3,6 +3,7 @@ package ru.netology.server;
 import ru.netology.server.handler.Handler;
 import ru.netology.server.request.Request;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -52,12 +53,10 @@ public class Server {
         } catch (IOException e) {
             e.printStackTrace();
         }
-
     }
 
     private void process(Socket socket) {
-        try (socket;
-             final var in = socket.getInputStream();
+        try (final var in = new BufferedInputStream(socket.getInputStream());
              final var out = new BufferedOutputStream(socket.getOutputStream());) {
 
             var request = Request.fromInputStream(in);
